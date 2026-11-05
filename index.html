@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MD-visning</title>
+<style>
+  :root {
+    --flate: #e3e3e3;
+    --verktoy: #f7f7f7;
+    --kant: #cfcfcf;
+    --tekst: #222;
+    --dempet: #666;
+    --knapp: #fff;
+    --knapp-hover: #ececec;
+    --skygge: 0 1px 3px rgba(0,0,0,.18), 0 4px 14px rgba(0,0,0,.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --flate: #2b2b2b;
+      --verktoy: #1f1f1f;
+      --kant: #3a3a3a;
+      --tekst: #e6e6e6;
+      --dempet: #a0a0a0;
+      --knapp: #2e2e2e;
+      --knapp-hover: #3a3a3a;
+      --skygge: 0 1px 3px rgba(0,0,0,.5), 0 4px 14px rgba(0,0,0,.35);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: flex; flex-direction: column;
+    background: var(--flate); color: var(--tekst);
+    font: 14px/1.4 "Segoe UI", system-ui, sans-serif;
+  }
+  .verktoy {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+    padding: 8px 16px; background: var(--verktoy); border-bottom: 1px solid var(--kant);
+  }
+  .verktoy .gruppe { display: flex; align-items: center; gap: 6px; }
+  .verktoy button, .verktoy select {
+    font: inherit; color: var(--tekst); background: var(--knapp);
+    border: 1px solid var(--kant); border-radius: 4px; padding: 4px 10px; cursor: pointer;
+  }
+  .verktoy button:hover { background: var(--knapp-hover); }
+  #filnavn { font-weight: 600; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #prosent { min-width: 4.5ch; text-align: center; font-variant-numeric: tabular-nums; }
+  #status { color: var(--dempet); margin-left: auto; }
+  #flate { flex: 1; overflow: auto; position: relative; }
+  #flate.drar { outline: 3px dashed #4a90d9; outline-offset: -10px; }
+  #tom {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    color: var(--dempet); font-size: 16px; text-align: center; padding: 16px;
+  }
+  #tom[hidden] { display: none; }
+  #lager { position: absolute; left: -100000px; top: 0; visibility: hidden; }
+
+  /* Sidene i rader. zoom får radene til å brytes på nytt, slik at flere sider får plass når du zoomer ut. */
+  #sider .pagedjs_pages {
+    display: flex; flex-wrap: wrap; justify-content: center; align-content: flex-start;
+    gap: 24px; padding: 24px;
+  }
+  #sider .pagedjs_page { background: #fff; box-shadow: var(--skygge); flex: none; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pagedjs@0.4.3/dist/paged.js"></script>
+</head>
+<body>
+<header class="verktoy">
+  <div class="gruppe">
+    <button id="apne" title="Åpne en .md-fil (Ctrl+O)">Åpne fil</button>
+    <button id="forrige" hidden></button>
+    <span id="filnavn"></span>
+  </div>
+  <div class="gruppe">
+    <button id="ut" title="Zoom ut (Ctrl+minus eller Ctrl+musehjul)">−</button>
+    <span id="prosent">100 %</span>
+    <button id="inn" title="Zoom inn (Ctrl+pluss eller Ctrl+musehjul)">+</button>
+    <label for="perRad">Sider per rad</label>
+    <select id="perRad">
+      <option value="">Fri zoom</option>
+      <option value="1">1</option>
+      <option value="2">2</option>
+      <option value="3">3</option>
+      <option value="4">4</option>
+      <option value="6">6</option>
+      <option value="8">8</option>
+    </select>
+  </div>
+  <span id="status"></span>
+</header>
+<main id="flate">
+  <div id="tom">Dra en .md-fil hit, eller trykk «Åpne fil».</div>
+  <div id="sider"></div>
+  <div id="lager"></div>
+</main>
+<input type="file" id="filvelger" accept=".md,.markdown,.txt,text/markdown" hidden>
+
+<script>
+// Stilen for selve sidene. Alt er avgrenset til innholdsboksen Paged.js lager på hver side,
+// så det ikke treffer verktøylinja.
+const SIDE_CSS = `
+@page {
+  size: A4;
+  margin: 20mm 18mm 20mm 18mm;
+  @bottom-center {
+    content: counter(page) " av " counter(pages);
+    font-family: "Segoe UI", system-ui, sans-serif; font-size: 8.5pt; color: #8a8a8a;
+  }
+}
+.pagedjs_page_content { font-family: "Segoe UI", system-ui, sans-serif; font-size: 10.5pt; line-height: 1.55; color: #1f2328; }
+.pagedjs_page_content > div > :first-child { margin-top: 0; }
+.pagedjs_page_content h1, .pagedjs_page_content h2, .pagedjs_page_content h3, .pagedjs_page_content h4, .pagedjs_page_content h5, .pagedjs_page_content h6 { line-height: 1.25; margin: 16pt 0 6pt; }
+.pagedjs_page_content h1 { font-size: 20pt; padding-bottom: 4pt; border-bottom: 1px solid #d8dee4; }
+.pagedjs_page_content h2 { font-size: 15pt; padding-bottom: 3pt; border-bottom: 1px solid #e5e9ed; }
+.pagedjs_page_content h3 { font-size: 12.5pt; }
+.pagedjs_page_content h4 { font-size: 11pt; }
+.pagedjs_page_content h5, .pagedjs_page_content h6 { font-size: 10.5pt; color: #59636e; }
+.pagedjs_page_content p { margin: 0 0 8pt; }
+.pagedjs_page_content ul, .pagedjs_page_content ol { margin: 0 0 8pt; padding-left: 20pt; }
+.pagedjs_page_content li { margin: 2pt 0; }
+.pagedjs_page_content li > p { margin: 0; }
+.pagedjs_page_content input[type=checkbox] { margin: 0 5pt 0 -15pt; vertical-align: -1pt; }
+.pagedjs_page_content li:has(> input[type=checkbox]) { list-style: none; }
+.pagedjs_page_content a { color: #0969da; text-decoration: none; }
+.pagedjs_page_content code { font-family: Consolas, "Cascadia Mono", monospace; font-size: 9pt; background: #eff1f3; padding: 1pt 3pt; border-radius: 3px; }
+.pagedjs_page_content pre { background: #f6f8fa; border: 1px solid #e5e9ed; border-radius: 4px; padding: 7pt 9pt; margin: 0 0 8pt;
+  white-space: pre-wrap; overflow-wrap: anywhere; }
+.pagedjs_page_content pre code { background: none; padding: 0; font-size: 8.8pt; line-height: 1.45; }
+.pagedjs_page_content blockquote { margin: 0 0 8pt; padding: 0 10pt; border-left: 3px solid #d0d7de; color: #59636e; }
+.pagedjs_page_content table { border-collapse: collapse; width: 100%; margin: 0 0 10pt; font-size: 9.5pt; }
+.pagedjs_page_content th, .pagedjs_page_content td { border: 1px solid #d0d7de; padding: 3pt 6pt; text-align: left; vertical-align: top; }
+.pagedjs_page_content th { background: #f6f8fa; }
+.pagedjs_page_content img { max-width: 100%; }
+.pagedjs_page_content hr { border: 0; border-top: 1px solid #d0d7de; margin: 12pt 0; }
+/* Sidebrudd leses fra kildeteksten før den legges på sider, så disse reglene kan ikke avgrenses
+   til innholdsboksen. De påvirker ikke verktøylinja. */
+h1, h2, h3, h4, h5, h6 { break-after: avoid; }
+tr, img { break-inside: avoid; }
+.sideskift { break-before: page; }
+`;
+
+const A4_BREDDE_PX = 210 / 25.4 * 96;
+const MELLOMROM = 24; // samme som gap og padding i #sider .pagedjs_pages
+
+const $ = (id) => document.getElementById(id);
+const flate = $('flate'), sider = $('sider'), lager = $('lager');
+
+let zoom = 1;
+let perRad = '';
+let filHandle = null;     // FileSystemFileHandle når nettleseren gir oss en, ellers null
+let sistEndret = 0;
+let tegner = false, tegnPaNytt = false;
+let forrigeVisning = null;
+let sisteTekst = '', sisteNavn = '';
+
+marked.setOptions({ gfm: true, breaks: false });
+
+// Lenker åpnes i ny fane, så visningen blir stående.
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A' && node.getAttribute('href') && !node.getAttribute('href').startsWith('#')) {
+    node.setAttribute('target', '_blank');
+    node.setAttribute('rel', 'noopener noreferrer');
+  }
+});
+
+function forbered(md) {
+  // Byte order mark fra enkelte editorer fjernes, ellers kjennes ikke front matter igjen.
+  if (md.charCodeAt(0) === 0xFEFF) md = md.slice(1);
+  // Front matter øverst vises ikke, akkurat som i MarkText.
+  md = md.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
+  // Manuelt sideskift: en linje med \pagebreak, \newpage, <!-- sideskift --> eller <!-- pagebreak -->.
+  md = md.replace(/^[ \t]*(\\pagebreak|\\newpage|<!--\s*(sideskift|pagebreak)\s*-->)[ \t]*$/gim,
+    '\n<div class="sideskift"></div>\n');
+  return md;
+}
+
+async function tegn(tekst) {
+  if (tegner) { tegnPaNytt = true; return; }
+  tegner = true;
+  try {
+    do {
+      tegnPaNytt = false;
+      const html = marked.parse(forbered(tekst));
+      const innhold = DOMPurify.sanitize(html, { RETURN_DOM_FRAGMENT: true });
+
+      // Sidene bygges utenfor skjermen uten zoom, så målingene blir riktige, og byttes inn når de er ferdige.
+      const mal = document.createElement('div');
+      lager.replaceChildren(mal);
+      const visning = new Paged.Previewer();
+      await visning.preview(innhold, [{ 'side.css': SIDE_CSS }], mal);
+
+      const topp = flate.scrollTop;
+      sider.replaceChildren(...mal.childNodes);
+      lager.replaceChildren();
+      if (forrigeVisning) forrigeVisning.polisher.destroy();
+      forrigeVisning = visning;
+      $('tom').hidden = true;
+      settZoom(perRad ? zoomForPerRad(Number(perRad)) : zoom, false);
+      flate.scrollTop = topp;
+      tekst = sisteTekst; // ble fila endret mens vi tegnet, tegnes den nyeste versjonen
+    } while (tegnPaNytt);
+    const n = antallSider();
+    status(`${n} ${n === 1 ? 'side' : 'sider'} · oppdatert ${klokke()}` +
+      (filHandle ? ' · oppdateres når du lagrer' : ' · dra inn fila på nytt for å oppdatere'));
+  } catch (feil) {
+    console.error(feil);
+    status('Klarte ikke å vise fila: ' + feil.message);
+  } finally {
+    tegner = false;
+  }
+}
+
+function antallSider() { return sider.querySelectorAll('.pagedjs_page').length; }
+
+function zoomForPerRad(n) {
+  const side = sider.querySelector('.pagedjs_page');
+  const bredde = side ? parseFloat(getComputedStyle(side).width) : A4_BREDDE_PX;
+  const behov = 2 * MELLOMROM + n * bredde + (n - 1) * MELLOMROM;
+  return (flate.clientWidth - 2) / behov;
+}
+
+function settZoom(ny, holdPlass = true) {
+  ny = Math.min(4, Math.max(0.08, ny));
+  const andel = holdPlass && flate.scrollHeight > flate.clientHeight
+    ? (flate.scrollTop + flate.clientHeight / 2) / flate.scrollHeight : null;
+  zoom = ny;
+  sider.style.zoom = ny;
+  $('prosent').textContent = Math.round(ny * 100) + ' %';
+  if (andel !== null) flate.scrollTop = andel * flate.scrollHeight - flate.clientHeight / 2;
+}
+
+function zoomTrinn(retning) {
+  perRad = '';
+  $('perRad').value = '';
+  settZoom(zoom * (retning > 0 ? 1.1 : 1 / 1.1));
+}
+
+function status(t) { $('status').textContent = t; }
+
+function klokke() {
+  return new Date().toLocaleTimeString('nb-NO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+async function visFil(navn, tekst) {
+  const nyFil = navn !== sisteNavn;
+  sisteNavn = navn;
+  sisteTekst = tekst;
+  $('filnavn').textContent = navn;
+  document.title = navn + ' · MD-visning';
+  if (nyFil) { sider.replaceChildren(); flate.scrollTop = 0; }
+  if (!tegner) status('Deler opp i sider …');
+  await tegn(tekst);
+}
+
+async function apneHandle(handle) {
+  filHandle = handle;
+  const fil = await handle.getFile();
+  sistEndret = fil.lastModified;
+  await visFil(fil.name, await fil.text());
+  lagreSisteHandle(handle);
+  $('forrige').hidden = true;
+}
+
+async function apneFil(fil) {
+  filHandle = null;
+  await visFil(fil.name, await fil.text());
+}
+
+// Ser etter endringer hvert sekund. Lagrer du i MarkText, tegnes sidene på nytt.
+setInterval(async () => {
+  if (!filHandle || document.hidden) return;
+  try {
+    const fil = await filHandle.getFile();
+    if (fil.lastModified !== sistEndret) {
+      sistEndret = fil.lastModified;
+      await visFil(fil.name, await fil.text());
+    }
+  } catch (feil) {
+    status('Mistet kontakten med fila. Åpne den på nytt.');
+    filHandle = null;
+  }
+}, 1000);
+
+// Husker sist åpnede fil mellom gangene. Fungerer bare i Edge og Chrome.
+function db() {
+  return new Promise((ok, feil) => {
+    const r = indexedDB.open('md-visning', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('filer');
+    r.onsuccess = () => ok(r.result);
+    r.onerror = () => feil(r.error);
+  });
+}
+async function lagreSisteHandle(handle) {
+  try {
+    const d = await db();
+    d.transaction('filer', 'readwrite').objectStore('filer').put(handle, 'siste');
+  } catch {}
+}
+async function hentSisteHandle() {
+  try {
+    const d = await db();
+    return await new Promise((ok) => {
+      const r = d.transaction('filer').objectStore('filer').get('siste');
+      r.onsuccess = () => ok(r.result || null);
+      r.onerror = () => ok(null);
+    });
+  } catch { return null; }
+}
+
+async function velgFil() {
+  if (window.showOpenFilePicker) {
+    try {
+      const [handle] = await showOpenFilePicker({
+        types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown', '.txt'] } }],
+      });
+      await apneHandle(handle);
+    } catch (feil) {
+      if (feil.name !== 'AbortError') status('Klarte ikke å åpne fila: ' + feil.message);
+    }
+  } else {
+    $('filvelger').click();
+  }
+}
+
+$('apne').addEventListener('click', velgFil);
+$('filvelger').addEventListener('change', (e) => { if (e.target.files[0]) apneFil(e.target.files[0]); });
+$('inn').addEventListener('click', () => zoomTrinn(1));
+$('ut').addEventListener('click', () => zoomTrinn(-1));
+$('perRad').addEventListener('change', (e) => {
+  perRad = e.target.value;
+  if (perRad) settZoom(zoomForPerRad(Number(perRad)));
+});
+
+$('forrige').addEventListener('click', async () => {
+  const handle = await hentSisteHandle();
+  if (!handle) return;
+  try {
+    if (await handle.requestPermission({ mode: 'read' }) === 'granted') await apneHandle(handle);
+  } catch (feil) {
+    status('Fant ikke fila igjen. Åpne den på nytt.');
+    $('forrige').hidden = true;
+  }
+});
+
+// Ctrl og musehjulet zoomer sidene i stedet for hele nettleservinduet.
+flate.addEventListener('wheel', (e) => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  zoomTrinn(e.deltaY < 0 ? 1 : -1);
+}, { passive: false });
+
+document.addEventListener('keydown', (e) => {
+  if (!e.ctrlKey) return;
+  if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomTrinn(1); }
+  else if (e.key === '-') { e.preventDefault(); zoomTrinn(-1); }
+  else if (e.key === '0') { e.preventDefault(); perRad = ''; $('perRad').value = ''; settZoom(1); }
+  else if (e.key.toLowerCase() === 'o') { e.preventDefault(); velgFil(); }
+});
+
+window.addEventListener('resize', () => { if (perRad) settZoom(zoomForPerRad(Number(perRad)), false); });
+
+// Dra og slipp. Edge og Chrome gir oss et håndtak til fila, så den kan følges med på.
+flate.addEventListener('dragover', (e) => { e.preventDefault(); flate.classList.add('drar'); });
+flate.addEventListener('dragleave', () => flate.classList.remove('drar'));
+flate.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  flate.classList.remove('drar');
+  const element = e.dataTransfer.items && e.dataTransfer.items[0];
+  const fil = e.dataTransfer.files[0];
+  // getAsFileSystemHandle må kalles før første await, ellers er dataene borte.
+  const lover = element && element.getAsFileSystemHandle ? element.getAsFileSystemHandle() : null;
+  try {
+    const handle = lover ? await lover : null;
+    if (handle && handle.kind === 'file') await apneHandle(handle);
+    else if (fil) await apneFil(fil);
+  } catch {
+    if (fil) await apneFil(fil);
+  }
+});
+
+(async () => {
+  const handle = await hentSisteHandle();
+  if (!handle) return;
+  try {
+    if (await handle.queryPermission({ mode: 'read' }) === 'granted') { await apneHandle(handle); return; }
+  } catch {}
+  $('forrige').textContent = 'Åpne igjen: ' + handle.name;
+  $('forrige').hidden = false;
+})();
+</script>
+</body>
+</html>
