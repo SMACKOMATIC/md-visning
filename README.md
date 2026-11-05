@@ -1,10 +1,14 @@
 # MD-visning
 
-Viser en markdown-fil som A4-sider ved siden av hverandre, slik som flersidevisningen i Word. Du skriver i MarkText og leser her.
+Viser en markdown-fil som A4-sider ved siden av hverandre, slik som flersidevisningen i Word. Du skriver i MarkText eller en annen editor og leser her.
+
+**Bruk den på nett:** https://smackomatic.github.io/md-visning/
+
+Fila du åpner leses bare i nettleseren din. Den lastes ikke opp noe sted.
 
 ## Slik bruker du den
 
-1. Åpne `index.html` i Edge eller Chrome. Dobbeltklikk på fila holder.
+1. Åpne adressen over i Edge eller Chrome. Du kan også laste ned repoet og åpne `index.html` derfra.
 2. Trykk «Åpne fil» eller dra en .md-fil inn i vinduet.
 3. Zoom med Ctrl og musehjulet, Ctrl+pluss og Ctrl+minus, eller knappene. Sidene legger seg i rader, og jo mer du zoomer ut, desto flere sider får plass per rad.
 4. Velg «Sider per rad» for å få akkurat 1, 2, 3, 4, 6 eller 8 sider i bredden.
